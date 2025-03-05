@@ -1,5 +1,17 @@
 # Telegram Web A
 
+> **Note**: This is a fork of the original Telegram Web A client with added AI input prediction functionality using OpenAI. The code was developed using Cursor IDE and is provided as-is without ongoing support.
+>
+>I'm not a JavaScript developer, just happy to have this working 🫡
+>
+> #### How to use:
+> - Add your OpenAI API key to the `.env` file
+> - Install and run as this README says
+> - Use button right from the search bar to toggle AI input prediction
+> - While in chat, press `Insert` button to apply prediction to the input
+>
+> <hr>
+
 This project won the first prize 🥇 at [Telegram Lightweight Client Contest](https://contest.com/javascript-web-3) and now is an official Telegram client available to anyone at [web.telegram.org/a](https://web.telegram.org/a).
 
 According to the original contest rules, it has nearly zero dependencies and is fully based on its own [Teact](https://github.com/Ajaxy/teact) framework (which re-implements React paradigm). It also uses a custom version of [GramJS](https://github.com/gram-js/gramjs) as an MTProto implementation.

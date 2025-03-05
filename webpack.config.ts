@@ -221,6 +221,7 @@ export default function createConfig(
           const shouldDisplayCommit = APP_ENV === 'staging' || !branch || branch === 'HEAD';
           return JSON.stringify(shouldDisplayCommit ? commit : branch);
         }, mode === 'development' ? true : []),
+        'process.env.OPENAI_API_KEY': JSON.stringify(process.env.OPENAI_API_KEY),
       }),
       new ProvidePlugin({
         Buffer: ['buffer', 'Buffer'],

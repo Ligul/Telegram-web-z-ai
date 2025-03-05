@@ -1,0 +1,27 @@
+.message-input {
+  position: relative;
+  
+  .predicted-text {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    color: var(--color-text-secondary);
+    pointer-events: none;
+    white-space: pre-wrap;
+    padding: calc((var(--base-height, 3.5rem) - var(--composer-text-size, 1rem) * 1.3125) / 2) 0.875rem;
+    margin: 0;
+    z-index: 1;
+    opacity: 0.5;
+    font-size: var(--composer-text-size, 1rem);
+    line-height: 1.3125;
+    background: transparent;
+
+    @media (max-width: 600px) {
+      padding: calc((2.875rem - var(--composer-text-size, 1rem) * 1.3125) / 2) 0.875rem;
+    }
+  }
+  
+  // ... existing styles ...
+} 

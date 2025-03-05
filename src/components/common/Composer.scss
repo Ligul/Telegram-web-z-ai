@@ -624,6 +624,15 @@
     box-shadow: none !important;
     caret-color: var(--color-text);
 
+    &:empty::before {
+      content: attr(aria-label);
+      color: var(--color-text-secondary);
+      position: absolute;
+      left: 0.875rem;
+      top: calc((var(--base-height, 3.5rem) - var(--composer-text-size, 1rem) * 1.375) / 2);
+      pointer-events: none;
+    }
+
     &.touched {
       & ~ .placeholder-text {
         opacity: 0;

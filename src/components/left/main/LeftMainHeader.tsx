@@ -1,8 +1,9 @@
 import type { FC } from '../../../lib/teact/teact';
+import type { ApiMessage } from '../../../api/types';
 import React, {
   memo, useEffect, useMemo, useRef,
 } from '../../../lib/teact/teact';
-import { getActions, withGlobal } from '../../../global';
+import { getActions, getGlobal, withGlobal } from '../../../global';
 
 import type { GlobalState } from '../../../global/types';
 import type { ISettings } from '../../../types';
@@ -19,6 +20,8 @@ import {
   selectIsCurrentUserPremium,
   selectTabState,
   selectTheme,
+  selectChatMessages,
+  selectCurrentMessageIds,
 } from '../../../global/selectors';
 import buildClassName from '../../../util/buildClassName';
 import captureEscKeyListener from '../../../util/captureEscKeyListener';
@@ -46,6 +49,7 @@ import ShowTransition from '../../ui/ShowTransition';
 import ConnectionStatusOverlay from '../ConnectionStatusOverlay';
 import LeftSideMenuItems from './LeftSideMenuItems';
 import StatusButton from './StatusButton';
+import OpenAIService from '../../../services/openai';
 
 import './LeftMainHeader.scss';
 
@@ -75,6 +79,7 @@ type StateProps =
     areChatsLoaded?: boolean;
     hasPasscode?: boolean;
     canSetPasscode?: boolean;
+    isAiEnabled?: boolean;
   }
   & Pick<GlobalState, 'connectionState' | 'isSyncing' | 'isFetchingDifference'>;
 
@@ -101,6 +106,7 @@ const LeftMainHeader: FC<OwnProps & StateProps> = ({
   areChatsLoaded,
   hasPasscode,
   canSetPasscode,
+  isAiEnabled,
   onSearchQuery,
   onSelectSettings,
   onSelectContacts,
@@ -190,6 +196,45 @@ const LeftMainHeader: FC<OwnProps & StateProps> = ({
 
   const handleLockScreen = useLastCallback(() => {
     lockScreen();
+  });
+
+  const handleAiToggle = useLastCallback(() => {
+    const newState = !isAiEnabled;
+    setSettingOption({ isAiEnabled: newState });
+
+    // Get OpenAI service instance
+    const openAiService = OpenAIService.getInstance('dummy-key');
+    
+    if (!newState) {
+      // Clear prediction when disabling AI
+      openAiService.clearPrediction();
+    } else {
+      // Regenerate prediction for current chat when enabling AI
+      const global = getGlobal();
+      const currentUserId = global.currentUserId;
+      const currentChat = selectCurrentMessageList(global);
+      if (currentChat) {
+        const messages = selectChatMessages(global, currentChat.chatId);
+        const messageIds = selectCurrentMessageIds(global, currentChat.chatId, currentChat.threadId, currentChat.type);
+        
+        if (messages && messageIds && messageIds.length > 0) {
+          // Format messages for OpenAI using the same approach as in Composer
+          const formattedMessages = messageIds
+            .slice(-20)
+            .map(id => messages[id])
+            .filter((msg): msg is ApiMessage => Boolean(msg?.content?.text?.text))
+            .map((msg) => ({
+              role: msg.senderId === currentUserId ? 'assistant' as const : 'user' as const,
+              content: msg.content.text!.text || '',
+              username: msg.senderId?.toString()
+            }));
+
+          if (formattedMessages.length > 0) {
+            openAiService.regeneratePrediction(currentChat.chatId, formattedMessages);
+          }
+        }
+      }
+    }
   });
 
   const isSearchRelevant = Boolean(globalSearchChatId)
@@ -301,6 +346,21 @@ const LeftMainHeader: FC<OwnProps & StateProps> = ({
             canShow={withStoryToggler}
           />
         </SearchInput>
+        <Button
+          round
+          ripple={!isMobile}
+          size="smaller"
+          color={isAiEnabled ? 'primary' : 'translucent'}
+          onClick={handleAiToggle}
+          className={buildClassName(
+            !isCurrentUserPremium && 'extra-spacing',
+            isAiEnabled && 'active',
+            'margin-left'
+          )}
+          ariaLabel={isAiEnabled ? 'Disable AI predictions' : 'Enable AI predictions'}
+        >
+          <Icon name="bots" />
+        </Button>
         {isCurrentUserPremium && <StatusButton />}
         {hasPasscode && (
           <Button
@@ -357,6 +417,7 @@ export default memo(withGlobal<OwnProps>(
       areChatsLoaded: Boolean(global.chats.listIds.active),
       hasPasscode: Boolean(global.passcode.hasPasscode),
       canSetPasscode: selectCanSetPasscode(global),
+      isAiEnabled: Boolean(global.settings.byKey.isAiEnabled),
     };
   },
 )(LeftMainHeader));

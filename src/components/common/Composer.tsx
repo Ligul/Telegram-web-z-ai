@@ -1,8 +1,9 @@
 import type { FC } from '../../lib/teact/teact';
 import React, {
-  memo, useEffect, useMemo, useRef, useSignal, useState,
+  memo, useEffect, useMemo, useRef, useSignal, useState, useCallback,
 } from '../../lib/teact/teact';
 import { getActions, getGlobal, withGlobal } from '../../global';
+import { selectChatMessages, selectCurrentMessageIds } from '../../global/selectors';
 
 import type {
   ApiAttachment,
@@ -28,6 +29,7 @@ import type {
   ApiUser,
   ApiVideo,
   ApiWebPage,
+  ApiMessageContent,
 } from '../../api/types';
 import type {
   GlobalState, TabState,
@@ -52,6 +54,7 @@ import {
   SCHEDULED_WHEN_ONLINE,
   SEND_MESSAGE_ACTION_INTERVAL,
   SERVICE_NOTIFICATIONS_USER_ID,
+  OPENAI_API_KEY,
 } from '../../config';
 import { requestMeasure, requestNextMutation } from '../../lib/fasterdom/fasterdom';
 import {
@@ -176,6 +179,14 @@ import ReactionAnimatedEmoji from './reactions/ReactionAnimatedEmoji';
 
 import './Composer.scss';
 
+import OpenAIService from '../../services/openai';
+import debounce from '../../util/debounce';
+
+interface Message {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
 type ComposerType = 'messageList' | 'story';
 
 type OwnProps = {
@@ -272,6 +283,7 @@ type StateProps =
     canPlayEffect?: boolean;
     shouldPlayEffect?: boolean;
     maxMessageLength: number;
+    messages: Record<number, ApiMessage>;
   };
 
 enum MainButtonState {
@@ -386,6 +398,7 @@ const Composer: FC<OwnProps & StateProps> = ({
   canPlayEffect,
   shouldPlayEffect,
   maxMessageLength,
+  messages,
 }) => {
   const {
     sendMessage,
@@ -1609,6 +1622,180 @@ const Composer: FC<OwnProps & StateProps> = ({
 
   const effectEmoji = areEffectsSupported && effect?.emoticon;
 
+  const openAiService = OpenAIService.getInstance(OPENAI_API_KEY);
+  const [predictedText, setPredictedText] = useState('');
+  const [lastGenerationTime, setLastGenerationTime] = useState(0);
+  const lastMessageRef = useRef<string | null>(null);
+
+  // Set current active chat and user
+  useEffect(() => {
+    if (chatId) {
+      openAiService.setCurrentChat(chatId);
+      const global = getGlobal();
+      if (global.currentUserId) {
+        openAiService.setCurrentUser(global.currentUserId);
+      }
+
+      // Add prediction listener
+      const handlePrediction = (predictionChatId: string, prediction: string) => {
+        if (predictionChatId === chatId) {
+          setPredictedText(prediction);
+        }
+      };
+      
+      openAiService.addPredictionListener(handlePrediction);
+      
+      return () => {
+        openAiService.setCurrentChat(null);
+        openAiService.removePredictionListener(handlePrediction);
+      };
+    }
+    return undefined;
+  }, [chatId]);
+
+  // Generate prediction function
+  const generatePrediction = useCallback(async () => {
+    if (!chatId || !currentMessageList) {
+      console.log('🚀 Composer - Cannot generate prediction: no chat or message list');
+      return;
+    }
+
+    try {
+      console.log('🚀 Composer - Requesting prediction from OpenAI');
+      
+      // Get messages from global state
+      const global = getGlobal();
+      const messages = selectChatMessages(global, chatId);
+      const messageIds = selectCurrentMessageIds(global, chatId, currentMessageList.threadId, currentMessageList.type);
+      
+      console.log('🚀 Composer - Debug Context:', {
+        chatId,
+        threadId: currentMessageList.threadId,
+        messageListType: currentMessageList.type,
+        messageIds,
+        messages,
+        currentUserId: global.currentUserId
+      });
+      
+      if (!messages || !messageIds || messageIds.length === 0) {
+        console.log('🚀 Composer - No messages found in chat');
+        setPredictedText('');
+        return;
+      }
+
+      // Format messages for OpenAI
+      const formattedMessages = messageIds
+        .slice(-20)
+        .map(id => messages[id])
+        .filter((msg): msg is ApiMessage => Boolean(msg?.content?.text?.text))
+        .map((msg) => ({
+          role: msg.senderId === currentUserId ? 'assistant' as const : 'user' as const,
+          content: msg.content?.text?.text || '',
+          username: msg.senderId?.toString()
+        }));
+
+      if (formattedMessages.length === 0) {
+        console.log('🚀 Composer - No valid messages to generate prediction');
+        setPredictedText('');
+        return;
+      }
+
+      const prediction = await openAiService.predictMessage(chatId, formattedMessages);
+      console.log('🚀 Composer - Received prediction:', prediction);
+      
+      setPredictedText(prediction);
+    } catch (error) {
+      console.error('🚀 Composer - Error getting prediction:', error);
+      setPredictedText('');
+    }
+  }, [chatId, currentMessageList, currentUserId]);
+
+  // Handle message changes
+  useEffect(() => {
+    if (!chatId || !currentMessageList || !messages) return;
+    
+    const messageIds = selectCurrentMessageIds(getGlobal(), chatId, currentMessageList.threadId, currentMessageList.type);
+    if (!messageIds || messageIds.length === 0) return;
+    
+    const lastMessageId = messageIds[messageIds.length - 1];
+    const lastMessage = messages[lastMessageId];
+
+    if (lastMessage?.content?.text?.text && lastMessageRef.current !== lastMessage.content.text.text) {
+      lastMessageRef.current = lastMessage.content.text.text;
+      
+      // Prevent too frequent predictions
+      const now = Date.now();
+      if (now - lastGenerationTime > 2000) { // 2 seconds cooldown
+        console.log('🚀 Composer - New message detected, generating prediction', {
+          lastMessageId,
+          text: lastMessage.content.text.text
+        });
+        setLastGenerationTime(now);
+        generatePrediction();
+      }
+    }
+  }, [chatId, currentMessageList, messages, generatePrediction, lastGenerationTime]);
+
+  // Create default message input props
+  const defaultMessageInputProps = useMemo(() => ({
+    id: inputId,
+    editableInputId,
+    customEmojiPrefix: type,
+    isStoryInput: isInStoryViewer,
+    chatId,
+    canSendPlainText: !isComposerBlocked,
+    threadId,
+    isReady,
+    isActive: !hasAttachments,
+    getHtml,
+    placeholder: activeVoiceRecording && windowWidth <= SCREEN_WIDTH_TO_HIDE_PLACEHOLDER
+      ? ''
+      : (!isComposerBlocked
+        ? (botKeyboardPlaceholder || inputPlaceholder || lang(placeholderForForumAsMessages || 'Message'))
+        : isInStoryViewer ? lang('StoryRepliesLocked') : lang('Chat.PlaceholderTextNotAllowed')),
+    timedPlaceholderDate,
+    timedPlaceholderLangKey,
+    forcedPlaceholder: inlineBotHelp,
+    canAutoFocus: isReady && isForCurrentMessageList && !hasAttachments && isInMessageList,
+    noFocusInterception: hasAttachments,
+    shouldSuppressFocus: isMobile && isSymbolMenuOpen,
+  }), [
+    inputId,
+    editableInputId,
+    type,
+    isInStoryViewer,
+    chatId,
+    isComposerBlocked,
+    threadId,
+    isReady,
+    hasAttachments,
+    getHtml,
+    activeVoiceRecording,
+    windowWidth,
+    botKeyboardPlaceholder,
+    inputPlaceholder,
+    lang,
+    placeholderForForumAsMessages,
+    timedPlaceholderDate,
+    timedPlaceholderLangKey,
+    inlineBotHelp,
+    isForCurrentMessageList,
+    isInMessageList,
+    isMobile,
+    isSymbolMenuOpen,
+  ]);
+
+  // Create message input props with prediction
+  const messageInputProps = useMemo(() => ({
+    ...defaultMessageInputProps,
+    predictedText,
+    onSend: async (...args: Parameters<typeof handleSend>) => {
+      await handleSend(...args);
+      console.log('🚀 Composer - Message sent, generating prediction');
+      generatePrediction();
+    },
+  }), [defaultMessageInputProps, predictedText, handleSend, generatePrediction]);
+
   return (
     <div className={fullClassName}>
       {isInMessageList && canAttachMedia && isReady && (
@@ -1853,11 +2040,16 @@ const Composer: FC<OwnProps & StateProps> = ({
             shouldSuppressFocus={isMobile && isSymbolMenuOpen}
             shouldSuppressTextFormatter={isEmojiTooltipOpen || isMentionTooltipOpen || isInlineBotTooltipOpen}
             onUpdate={setHtml}
-            onSend={onSend}
+            onSend={async (...args) => {
+              await onSend(...args);
+              console.log('🚀 Composer - Message sent, generating prediction');
+              generatePrediction();
+            }}
             onSuppressedFocus={closeSymbolMenu}
             onFocus={markInputHasFocus}
             onBlur={unmarkInputHasFocus}
             isNeedPremium={isNeedPremium}
+            predictedText={predictedText}
           />
           {isInMessageList && (
             <>
@@ -2225,6 +2417,7 @@ export default memo(withGlobal<OwnProps>(
       canPlayEffect,
       shouldPlayEffect,
       maxMessageLength,
+      messages: selectChatMessages(global, chatId),
     };
   },
 )(Composer));

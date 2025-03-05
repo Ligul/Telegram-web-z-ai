@@ -1,0 +1,46 @@
+.message-input {
+  position: relative;
+  width: 100%;
+  
+  .clone {
+    position: absolute;
+    top: -9999px;
+    left: -9999px;
+    height: auto !important;
+    visibility: hidden;
+  }
+}
+
+#message-input-text,
+#story-input-text {
+  position: relative;
+  min-height: 1.125rem;
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  -webkit-text-fill-color: currentColor;
+  overflow: hidden;
+  
+  .form-control {
+    padding: calc((var(--base-height, 3.5rem) - var(--composer-text-size, 1rem) * 1.3125) / 2) 0.875rem;
+    line-height: 1.3125;
+    font-size: var(--composer-text-size, 1rem);
+    
+    &:empty::before {
+      content: attr(aria-label);
+      color: var(--color-text-secondary);
+      pointer-events: none;
+      position: absolute;
+      left: 0.875rem;
+      top: calc((var(--base-height, 3.5rem) - var(--composer-text-size, 1rem) * 1.3125) / 2);
+    }
+
+    @media (max-width: 600px) {
+      padding: calc((2.875rem - var(--composer-text-size, 1rem) * 1.3125) / 2) 0.875rem;
+      
+      &:empty::before {
+        top: calc((2.875rem - var(--composer-text-size, 1rem) * 1.3125) / 2);
+      }
+    }
+  }
+} 

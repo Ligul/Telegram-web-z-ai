@@ -413,6 +413,7 @@ export type GlobalState = {
     botVerificationShownPeerIds: string[];
     miniAppsCachedPosition?: Point;
     miniAppsCachedSize?: Size;
+    isAiEnabled?: boolean;
   };
 
   push?: {

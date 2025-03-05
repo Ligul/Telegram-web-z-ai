@@ -11,7 +11,7 @@ import type { ApiInputMessageReplyInfo } from '../../../api/types';
 import type { IAnchorPosition, ISettings, ThreadId } from '../../../types';
 import type { Signal } from '../../../util/signals';
 
-import { EDITABLE_INPUT_ID } from '../../../config';
+import { EDITABLE_INPUT_ID, OPENAI_API_KEY } from '../../../config';
 import { requestForcedReflow, requestMutation } from '../../../lib/fasterdom/fasterdom';
 import { selectCanPlayAnimatedEmojis, selectDraft, selectIsInSelectMode } from '../../../global/selectors';
 import buildClassName from '../../../util/buildClassName';
@@ -32,6 +32,7 @@ import useFlag from '../../../hooks/useFlag';
 import useLastCallback from '../../../hooks/useLastCallback';
 import useOldLang from '../../../hooks/useOldLang';
 import useInputCustomEmojis from './hooks/useInputCustomEmojis';
+import OpenAIService from '../../../services/openai';
 
 import Icon from '../../common/icons/Icon';
 import Button from '../../ui/Button';
@@ -75,6 +76,8 @@ type OwnProps = {
   onFocus?: NoneToVoidFunction;
   onBlur?: NoneToVoidFunction;
   isNeedPremium?: boolean;
+  predictedText?: string;
+  onInputChange?: (text: string) => void;
 };
 
 type StateProps = {
@@ -141,6 +144,8 @@ const MessageInput: FC<OwnProps & StateProps> = ({
   onFocus,
   onBlur,
   isNeedPremium,
+  predictedText,
+  onInputChange,
 }) => {
   const {
     editLastMessage,
@@ -380,15 +385,48 @@ const MessageInput: FC<OwnProps & StateProps> = ({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    console.log('🎯 MessageInput - KeyDown event:', e.key);
+    
+    const insertPrediction = () => {
+      if (!predictedText) return false;
+      
+      console.log('🎯 MessageInput - Inserting prediction:', predictedText);
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Insert the predicted text into the input
+      const inputElement = e.target as HTMLDivElement;
+      inputElement.innerHTML = predictedText;
+      onUpdate(predictedText);
+      
+      // Place cursor at the end
+      const range = document.createRange();
+      const sel = window.getSelection();
+      range.selectNodeContents(inputElement);
+      range.collapse(false);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+      
+      // Clear prediction
+      if (onInputChange) {
+        onInputChange('');
+      }
+      return true;
+    };
+
+    // Handle prediction insertion keys
+    if ((e.key === 'Insert' || e.key === 'Tab') && insertPrediction()) {
+      return;
+    }
+
     // https://levelup.gitconnected.com/javascript-events-handlers-keyboard-and-load-events-1b3e46a6b0c3#1960
     const { isComposing } = e;
-
     const html = getHtml();
+    
     if (!isComposing && !html && (e.metaKey || e.ctrlKey)) {
       const targetIndexDelta = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : undefined;
       if (targetIndexDelta) {
         e.preventDefault();
-
         replyToNextMessage({ targetIndexDelta });
         return;
       }
@@ -403,7 +441,6 @@ const MessageInput: FC<OwnProps & StateProps> = ({
         )
       ) {
         e.preventDefault();
-
         closeTextFormatter();
         onSend();
       }
@@ -417,23 +454,12 @@ const MessageInput: FC<OwnProps & StateProps> = ({
 
   function handleChange(e: ChangeEvent<HTMLDivElement>) {
     const { innerHTML, textContent } = e.currentTarget;
-
+    console.log('🎯 MessageInput - Text changed:', textContent);
     onUpdate(innerHTML === SAFARI_BR ? '' : innerHTML);
-
-    // Reset focus on the input to remove any active styling when input is cleared
-    if (
-      !IS_TOUCH_ENV
-      && (!textContent || !textContent.length)
-      // When emojis are not supported, innerHTML contains an emoji img tag that doesn't exist in the textContext
-      && !(!IS_EMOJI_SUPPORTED && innerHTML.includes('emoji-small'))
-      && !(innerHTML.includes('custom-emoji'))
-    ) {
-      const selection = window.getSelection()!;
-      if (selection) {
-        inputRef.current!.blur();
-        selection.removeAllRanges();
-        focusEditableElement(inputRef.current!, true);
-      }
+    
+    if (onInputChange) {
+      console.log('🎯 MessageInput - Calling onInputChange with:', textContent);
+      onInputChange(textContent || '');
     }
   }
 
@@ -584,31 +610,10 @@ const MessageInput: FC<OwnProps & StateProps> = ({
             onMouseDown={handleMouseDown}
             onContextMenu={IS_ANDROID ? handleAndroidContextMenu : undefined}
             onTouchCancel={IS_ANDROID ? processSelectionWithTimeout : undefined}
-            aria-label={placeholder}
             onFocus={!isNeedPremium ? onFocus : undefined}
             onBlur={!isNeedPremium ? onBlur : undefined}
+            aria-label={predictedText || placeholder}
           />
-          {!forcedPlaceholder && (
-            <span
-              className={buildClassName(
-                'placeholder-text',
-                !isAttachmentModalInput && !canSendPlainText && 'with-icon',
-                isNeedPremium && 'is-need-premium',
-              )}
-              dir="auto"
-            >
-              {!isAttachmentModalInput && !canSendPlainText
-                && <Icon name="lock-badge" className="placeholder-icon" />}
-              {shouldDisplayTimer ? (
-                <TextTimer langKey={timedPlaceholderLangKey!} endsAt={timedPlaceholderDate!} onEnd={handleTimerEnd} />
-              ) : placeholder}
-              {isStoryInput && isNeedPremium && (
-                <Button className="unlock-button" size="tiny" color="adaptive" onClick={handleOpenPremiumModal}>
-                  {lang('StoryRepliesLockedButton')}
-                </Button>
-              )}
-            </span>
-          )}
           <canvas ref={sharedCanvasRef} className="shared-canvas" />
           <canvas ref={sharedCanvasHqRef} className="shared-canvas" />
           <div ref={absoluteContainerRef} className="absolute-video-container" />
@@ -616,28 +621,12 @@ const MessageInput: FC<OwnProps & StateProps> = ({
       </div>
       <div
         ref={scrollerCloneRef}
-        className={buildClassName('custom-scroll',
-          SCROLLER_CLASS,
-          'clone',
-          isNeedPremium && 'is-need-premium')}
+        className={buildClassName('custom-scroll', SCROLLER_CLASS, 'clone', isNeedPremium && 'is-need-premium')}
       >
         <div className={inputScrollerContentClass}>
           <div ref={cloneRef} className={buildClassName(className, 'clone')} dir="auto" />
         </div>
       </div>
-      {captionLimit !== undefined && (
-        <div className="max-length-indicator" dir="auto">
-          {captionLimit}
-        </div>
-      )}
-      <TextFormatter
-        isOpen={isTextFormatterOpen}
-        anchorPosition={textFormatterAnchorPosition}
-        selectedRange={selectedRange}
-        setSelectedRange={setSelectedRange}
-        onClose={handleCloseTextFormatter}
-      />
-      {forcedPlaceholder && <span className="forced-placeholder">{renderText(forcedPlaceholder!)}</span>}
     </div>
   );
 };

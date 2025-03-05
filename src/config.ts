@@ -445,3 +445,5 @@ export const DEFAULT_GIFT_PROFILE_FILTER_OPTIONS : GiftProfileFilterOptions = {
   shouldIncludeDisplayed: true,
   shouldIncludeHidden: true,
 } as const;
+
+export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
